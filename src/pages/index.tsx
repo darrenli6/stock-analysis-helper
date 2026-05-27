@@ -236,10 +236,10 @@ export default function Home() {
                 <p className="text-sm uppercase tracking-[0.35em] text-cyan-300/80">
                   Stock Analysis Helper
                 </p>
-                <h1 className="mt-3 text-xl font-semibold tracking-tight text-white md:text-6xl xl:whitespace-nowrap xl:text-[4.25rem] 2xl:text-[2.7rem]">
+                <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white md:text-4xl lg:text-5xl xl:text-5xl">
                   股票分析助手，输入自然语言，生成一份可执行的股票分析结果
                 </h1>
-                <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-300 md:text-base xl:whitespace-nowrap">
+                <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-300 md:text-base">
                   支持股票搜索、技术指标判断、宏观环境摘要、历史回测与止盈止损建议。
                   非投资类请求会被直接拒绝。
                 </p>

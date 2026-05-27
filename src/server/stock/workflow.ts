@@ -9,13 +9,14 @@ import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
 
 const execFileAsync = promisify(execFile);
 
-// Resolve the local binary installed via package.json — avoids npx network fetch in
-// restricted server environments (e.g. AWS Lambda / Amplify sandboxes with no $HOME).
-const WESTOCK_BIN = path.join(
+// Invoke the package script directly with `node` — avoids relying on .bin symlinks
+// which are not always created in Lambda / Amplify deployments.
+const WESTOCK_SCRIPT = path.join(
   process.cwd(),
   "node_modules",
-  ".bin",
-  "westock-data-clawhub"
+  "westock-data-clawhub",
+  "scripts",
+  "index.js"
 );
 
 type IntentResult = {
@@ -343,10 +344,10 @@ async function setTaskStatus(
 
 async function runWestockCommand(args: string[]) {
   const startedAt = Date.now();
-  const command = [WESTOCK_BIN, ...args].join(" ");
+  const command = ["node", WESTOCK_SCRIPT, ...args].join(" ");
   console.log("[westock] start", command);
 
-  const { stdout, stderr } = await execFileAsync(WESTOCK_BIN, args, {
+  const { stdout, stderr } = await execFileAsync("node", [WESTOCK_SCRIPT, ...args], {
     cwd: process.cwd(),
     maxBuffer: 1024 * 1024 * 10,
   });
