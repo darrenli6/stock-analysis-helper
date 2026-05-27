@@ -1,6 +1,7 @@
 import Head from "next/head";
 import { useEffect, useState } from "react";
 import { ActionMenu } from "~/components/index/ActionMenu";
+import { DebateDialog } from "~/components/index/DebateDialog";
 import { ChipAnalysis } from "~/components/index/ChipAnalysis";
 import { CompanyProfile } from "~/components/index/CompanyProfile";
 import { DebugJson } from "~/components/index/DebugJson";
@@ -31,6 +32,7 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollInfo, setPollInfo] = useState<string>("未开始轮询");
+  const [showDebate, setShowDebate] = useState(false);
 
   useEffect(() => {
     if (!taskId || (status !== "pending" && status !== "running")) return;
@@ -154,7 +156,7 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>股票分析工作台</title>
+        <title>达轮-股票分析助手</title>
         <meta
           name="description"
           content="输入股票分析需求，查看技术指标、宏观环境、历史回测与买卖建议。"
@@ -284,11 +286,31 @@ export default function Home() {
                 )}
 
                 <RecommendationCard result={result} actionText={actionText} />
+
+                {/* 买卖方辩论入口 */}
+                <div className="flex justify-center pb-2">
+                  <button
+                    onClick={() => setShowDebate(true)}
+                    className="flex items-center gap-2 rounded-2xl border border-white/10 bg-gradient-to-r from-emerald-900/30 to-red-900/30 px-6 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-emerald-900/50 hover:to-red-900/50 hover:shadow-emerald-900/20 active:scale-95"
+                  >
+                    <span>🐂</span>
+                    <span>开启买卖方辩论</span>
+                    <span>🐻</span>
+                  </button>
+                </div>
+
                 <DebugJson data={result} />
               </>
             ) : null}
           </section>
         </div>
+        {showDebate && result && taskId && (
+          <DebateDialog
+            result={result}
+            taskId={taskId}
+            onClose={() => setShowDebate(false)}
+          />
+        )}
         <Footer />
         <MarketPulse />
       </main>

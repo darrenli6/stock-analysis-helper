@@ -121,6 +121,7 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
 
 export const travelTasksRelations = relations(travelTasks, ({ many }) => ({
   logs: many(travelTaskLogs),
+  debates: many(stockDebates),
 }));
 
 export const travelTaskLogsRelations = relations(travelTaskLogs, ({ one }) => ({
@@ -128,4 +129,54 @@ export const travelTaskLogsRelations = relations(travelTaskLogs, ({ one }) => ({
     fields: [travelTaskLogs.taskId],
     references: [travelTasks.id],
   }),
+}));
+
+// ── 买卖方辩论 ──────────────────────────────────────────────────────────────
+
+export const stockDebates = pgTable(
+  "stock_debates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => travelTasks.id, { onDelete: "cascade" }),
+    stockCode: varchar("stock_code", { length: 50 }).notNull(),
+    stockName: varchar("stock_name", { length: 100 }).notNull(),
+    /** running | paused | completed | failed */
+    status: varchar("status", { length: 20 }).notNull().default("running"),
+    totalRounds: smallint("total_rounds").notNull().default(3),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [index("idx_debates_task").on(table.taskId, table.createdAt)]
+);
+
+export const stockDebateMessages = pgTable(
+  "stock_debate_messages",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    debateId: uuid("debate_id")
+      .notNull()
+      .references(() => stockDebates.id, { onDelete: "cascade" }),
+    round: smallint("round").notNull(),
+    /** bull | bear */
+    side: varchar("side", { length: 10 }).notNull(),
+    /** deepseek | openai */
+    provider: varchar("provider", { length: 20 }).notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("idx_debate_messages").on(table.debateId, table.id)]
+);
+
+export const stockDebatesRelations = relations(stockDebates, ({ one, many }) => ({
+  task: one(travelTasks, { fields: [stockDebates.taskId], references: [travelTasks.id] }),
+  messages: many(stockDebateMessages),
+}));
+
+export const stockDebateMessagesRelations = relations(stockDebateMessages, ({ one }) => ({
+  debate: one(stockDebates, { fields: [stockDebateMessages.debateId], references: [stockDebates.id] }),
 }));
