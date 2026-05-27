@@ -16,6 +16,7 @@ export const env = createEnv({
     TAVILY_API_KEY: z.string().optional(),
     SHOUQUAN_163_EMAIL: z.string().optional(),
     FROM_EMAIL: z.string().optional(),
+    DEEPSEEK_API_KEY: z.string().optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -41,6 +42,7 @@ export const env = createEnv({
     TAVILY_API_KEY: process.env.TAVILY_API_KEY,
     SHOUQUAN_163_EMAIL: process.env.SHOUQUAN_163_EMAIL,
     FROM_EMAIL: process.env.FROM_EMAIL,
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
     NODE_ENV: process.env.NODE_ENV,
   },
   /**

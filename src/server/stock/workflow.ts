@@ -912,6 +912,65 @@ function normalizeSearchResult(result: CliResult, fallbackQuery: string): Search
   };
 }
 
+const INTENT_SYSTEM_PROMPT =
+  "你是一个意图分类器。只判断用户是否在请求股票、ETF、指数相关的投资分析。输出 JSON：{supported:boolean,reason:string,stockQuery?:string}。";
+
+async function classifyIntentWithDeepSeek(normalized: string): Promise<IntentResult | null> {
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "deepseek-v4-pro",
+      messages: [
+        { role: "system", content: INTENT_SYSTEM_PROMPT },
+        { role: "user", content: normalized },
+      ],
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) throw new Error(`DeepSeek error ${response.status}`);
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+  // 去除可能的 markdown 代码块包裹
+  const jsonText = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const parsed = JSON.parse(jsonText || "{}") as IntentResult;
+  return typeof parsed.supported === "boolean" ? parsed : null;
+}
+
+async function classifyIntentWithOpenAI(normalized: string): Promise<IntentResult | null> {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      input: [
+        { role: "system", content: INTENT_SYSTEM_PROMPT },
+        { role: "user", content: normalized },
+      ],
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  if (!response.ok) throw new Error(`OpenAI error ${response.status}`);
+
+  const data = (await response.json()) as { output_text?: string };
+  const parsed = JSON.parse(data.output_text ?? "{}") as IntentResult;
+  return typeof parsed.supported === "boolean" ? parsed : null;
+}
+
 async function classifyIntent(userInput: string): Promise<IntentResult> {
   const normalized = userInput.trim();
   const extractedStockQuery = extractStockQuery(normalized);
@@ -919,68 +978,37 @@ async function classifyIntent(userInput: string): Promise<IntentResult> {
     normalized.toLowerCase().includes(keyword.toLowerCase())
   );
 
-  if (!env.OPENAI_API_KEY) {
+  const hasDeepSeek = Boolean(env.DEEPSEEK_API_KEY);
+  const hasOpenAI = Boolean(env.OPENAI_API_KEY);
+
+  // 无任何 AI Key → 本地关键词兜底
+  if (!hasDeepSeek && !hasOpenAI) {
     return localSupported
-      ? {
-          supported: true,
-          reason: "命中本地股票分析关键词",
-          stockQuery: extractedStockQuery,
-        }
+      ? { supported: true, reason: "命中本地股票分析关键词", stockQuery: extractedStockQuery }
       : { supported: false, reason: "未识别到股票投资分析意图" };
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        input: [
-          {
-            role: "system",
-            content:
-              "你是一个意图分类器。只判断用户是否在请求股票、ETF、指数相关的投资分析。输出 JSON：{supported:boolean,reason:string,stockQuery?:string}。",
-          },
-          {
-            role: "user",
-            content: normalized,
-          },
-        ],
-      }),
-    });
+    const parsed = hasDeepSeek
+      ? await classifyIntentWithDeepSeek(normalized)
+      : await classifyIntentWithOpenAI(normalized);
 
-    if (!response.ok) throw new Error(`OpenAI error ${response.status}`);
-
-    const data = (await response.json()) as {
-      output_text?: string;
-    };
-
-    const parsed = JSON.parse(data.output_text ?? "{}") as IntentResult;
-    if (typeof parsed.supported === "boolean") {
+    if (parsed) {
       return {
         ...parsed,
         stockQuery: parsed.stockQuery?.trim() || extractedStockQuery,
       };
     }
-  } catch {
+  } catch (err) {
+    const provider = hasDeepSeek ? "DeepSeek" : "OpenAI";
+    console.warn(`[classifyIntent] ${provider} 调用失败，回退到本地规则`, err);
     return localSupported
-      ? {
-          supported: true,
-          reason: "OpenAI 不可用，回退到本地关键词判断",
-          stockQuery: extractedStockQuery,
-        }
-      : { supported: false, reason: "OpenAI 不可用且本地规则未识别为股票请求" };
+      ? { supported: true, reason: `${provider} 不可用，回退到本地关键词判断`, stockQuery: extractedStockQuery }
+      : { supported: false, reason: `${provider} 不可用且本地规则未识别为股票请求` };
   }
 
   return localSupported
-    ? {
-        supported: true,
-        reason: "本地规则判断为股票请求",
-        stockQuery: extractedStockQuery,
-      }
+    ? { supported: true, reason: "本地规则判断为股票请求", stockQuery: extractedStockQuery }
     : { supported: false, reason: "不支持当前请求" };
 }
 
@@ -1510,6 +1538,9 @@ export async function processTask(taskId: string) {
     await logTask(taskId, 1, "step_done", "意图识别完成");
 
     await logTask(taskId, 2, "step_start", getStepLabel(2));
+
+
+
     const resolvedSearchQuery = intent.stockQuery?.trim() || task.userInput;
     await logTask(taskId, 2, "log", `准备搜索标的：${resolvedSearchQuery}`, {
       originalInput: task.userInput,
