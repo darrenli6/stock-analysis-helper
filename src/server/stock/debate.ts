@@ -4,7 +4,7 @@ import { stockDebates, stockDebateMessages } from "~/server/db/schema";
 import { env } from "~/env";
 import type { AnalysisResult } from "~/types";
 
-const TOTAL_ROUNDS = 3;
+const TOTAL_ROUNDS = 10;
 
 // ── 分析摘要 ──────────────────────────────────────────────────────────────────
 
