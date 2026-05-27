@@ -16,9 +16,7 @@ import type { AnalysisResult, KlineRow, TaskLog, TaskSnapshot } from "~/types";
 const EXAMPLE_PROMPTS = [
   "分析贵州茅台现在是否适合买入，给我技术指标、宏观环境、历史回测和止盈止损建议",
   "分析腾讯控股目前的技术面和资金面，给出买卖建议",
-  "分析英伟达 NVDA 当前买入时机，结合宏观环境和技术指标",
   "分析比亚迪现在值不值得买，给出止盈止损价位",
-  "分析恒生科技指数 ETF 的行情走势和操作建议",
 ];
 
 function formatValue(value: unknown) {

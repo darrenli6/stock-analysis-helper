@@ -242,38 +242,54 @@ const stockRequestNoise = [
   "怎么操作",
 ];
 
+// 提取时排除的非股票词（时间/语境词，避免误识别为标的）
+const EXTRACT_EXCLUDE = new Set([
+  "当前", "现在", "目前", "最近", "今日", "今天", "近期",
+  "买入", "卖出", "时机", "操作", "结合", "综合", "指标", "环境",
+]);
+
 function extractStockQuery(userInput: string) {
   const normalized = userInput
     .replace(/[，。！？、；：,.!?;:]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  const codeMatch = normalized.match(/\b(hk\d{5}|us[A-Za-z.\-]+|sh\d{6}|sz\d{6}|bj\d{6})\b/);
-  if (codeMatch) {
-    return codeMatch[1]!.trim();
+  // 1. 带前缀的股票代码：sh600519 / hk00700 / usNVDA
+  const codeMatch = normalized.match(/\b(hk\d{5}|us[A-Za-z.\-]+|sh\d{6}|sz\d{6}|bj\d{6})\b/i);
+  if (codeMatch) return codeMatch[1]!.trim().toLowerCase();
+
+  // 2. 裸美股 ticker：NVDA / AAPL / TSLA（2-5 位大写字母，不与其他 ASCII 字母相邻）
+  const tickerMatch = normalized.match(/(?<![A-Za-z])([A-Z]{2,5})(?![A-Za-z])/);
+  if (tickerMatch) return `us${tickerMatch[1]!}`;
+
+  // 公共终止词（出现后说明股票名称已结束）
+  const TERM = "现在|是否|适不适合|值不值得|给我|买入|卖出|走势|情况|当前|目前|结合|时机|的|并|\\s|$";
+
+  // 3. 触发词之后紧跟的中文公司名（非贪婪，遇到终止词停下）
+  const chineseAfterKw = new RegExp(`(?:分析|看看|研究)\\s*([\\u4e00-\\u9fff·•]{2,12}?)(?:${TERM})`);
+  const m1 = normalized.match(chineseAfterKw);
+  if (m1?.[1] && !EXTRACT_EXCLUDE.has(m1[1]) && !stockIntentKeywords.includes(m1[1])) {
+    return m1[1].trim();
   }
 
-  const patterns = [
-    /分析\s*([^\s]{2,20}?)(?:现在|是否|适不适合|值不值得|给我|的|买入|卖出|走势|情况|并|，|,|。|$)/,
-    /看看\s*([^\s]{2,20}?)(?:现在|是否|适不适合|值不值得|给我|的|买入|卖出|走势|情况|并|，|,|。|$)/,
-    /([^\s]{2,20}?)(?:现在|是否|适不适合|值不值得|给我|的|买入|卖出|走势|情况|并|，|,|。|$)/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    const candidate = match?.[1]?.trim();
-    if (candidate && !stockIntentKeywords.includes(candidate)) {
-      return candidate;
-    }
+  // 4. 任意位置的中文股票名（非贪婪，遇到终止词停下）
+  const chineseAnywhere = new RegExp(`([\\u4e00-\\u9fff·•]{2,12}?)(?:${TERM})`);
+  const m2 = normalized.match(chineseAnywhere);
+  if (m2?.[1] && !EXTRACT_EXCLUDE.has(m2[1]) && !stockIntentKeywords.includes(m2[1])) {
+    return m2[1].trim();
   }
 
+  // 5. 噪声剥离兜底
+  const extraNoise = ["当前", "现在", "目前", "最近", "时机", "结合", "买入", "卖出"];
   let cleaned = normalized;
-  for (const noise of stockRequestNoise) {
-    cleaned = cleaned.replaceAll(noise, " ");
+  for (const n of [...stockRequestNoise, ...extraNoise]) {
+    cleaned = cleaned.replaceAll(n, " ");
   }
-
-  cleaned = cleaned.replace(/\s+/g, " ").trim();
-  const tokens = cleaned.split(" ").filter(Boolean);
+  const tokens = cleaned
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((t) => t.length >= 2 && !EXTRACT_EXCLUDE.has(t) && !stockIntentKeywords.includes(t));
   return tokens[0] ?? normalized;
 }
 
