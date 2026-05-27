@@ -884,11 +884,26 @@ function toRows(result: CliResult | null): Record<string, unknown>[] | null {
   return null;
 }
 
+/**
+ * 统一规范化股票代码格式：
+ *  - us 开头：前缀保留小写，ticker 部分大写，去除交易所后缀（.oq / .n / .nq 等）
+ *  - 其余（hk / sh / sz / bj）：全小写
+ */
+function normalizeStockCode(raw: string): string {
+  const code = raw.trim().toLowerCase();
+  if (code.startsWith("us")) {
+    const ticker = code.slice(2).replace(/\.[a-z0-9]+$/i, "").toUpperCase();
+    return `us${ticker}`;
+  }
+  return code;
+}
+
 function normalizeSearchResult(result: CliResult, fallbackQuery: string): SearchMatch | null {
   const parsed = result.parsed;
   if (Array.isArray(parsed) && parsed.length > 0) {
     const first = parsed[0] as Record<string, unknown>;
-    const code = String(first.code ?? first.symbol ?? first.stockCode ?? "").trim().toLowerCase();
+    const raw = String(first.code ?? first.symbol ?? first.stockCode ?? "").trim();
+    const code = normalizeStockCode(raw);
     const name = String(first.name ?? first.stock_name ?? first.stockName ?? fallbackQuery).trim();
     if (code) return { code, name, market: String(first.market ?? "") || undefined };
   }
@@ -897,7 +912,8 @@ function normalizeSearchResult(result: CliResult, fallbackQuery: string): Search
     const records = Object.values(parsed as Record<string, unknown>).find(Array.isArray);
     if (Array.isArray(records) && records.length > 0) {
       const first = records[0] as Record<string, unknown>;
-      const code = String(first.code ?? first.symbol ?? "").trim().toLowerCase();
+      const raw = String(first.code ?? first.symbol ?? "").trim();
+      const code = normalizeStockCode(raw);
       const name = String(first.name ?? first.stock_name ?? fallbackQuery).trim();
       if (code) return { code, name, market: String(first.market ?? "") || undefined };
     }
@@ -907,7 +923,7 @@ function normalizeSearchResult(result: CliResult, fallbackQuery: string): Search
   if (!codeMatch) return null;
 
   return {
-    code: codeMatch[1]!.toLowerCase(),
+    code: normalizeStockCode(codeMatch[1]!),
     name: fallbackQuery,
   };
 }
