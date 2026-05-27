@@ -5,22 +5,22 @@ frontend:
       commands:
         # Install pnpm
         - npm install -g pnpm@10.12.4
-        # Install dependencies (--shamefully-hoist flattens node_modules for CJS compat)
+        # Install dependencies
         - pnpm install --shamefully-hoist
 
     build:
       commands:
         - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
         - pnpm run build
+        # Copy westock package into .next so it's available at SSR runtime
+        # (Amplify deploys .next contents to /tmp/app, so process.cwd()/node_modules must live here)
+        # westock-data-clawhub has zero external dependencies — copying the single folder is enough
+        - mkdir -p .next/node_modules/westock-data-clawhub
+        - cp -r node_modules/westock-data-clawhub/. .next/node_modules/westock-data-clawhub/
   artifacts:
-    # Deploy from project root so node_modules is available to the SSR compute function
-    baseDirectory: .
+    baseDirectory: .next
     files:
-      - '.next/**/*'
-      - 'node_modules/**/*'
-      - 'package.json'
-      - 'next.config.js'
-      - 'public/**/*'
+      - '**/*'
   cache:
     paths:
       - node_modules/**/*
