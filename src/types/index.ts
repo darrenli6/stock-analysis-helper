@@ -68,6 +68,7 @@ export type AnalysisResult = {
     stopLoss: number | null;
   };
   fundAnalysis: FundAnalysisData | null;
+  macroAnalysis: MacroAnalysisData | null;
 };
 
 export type KlineRow = {
@@ -79,6 +80,24 @@ export type KlineRow = {
   volume: number | null;
   amount: number | null;
   exchange: number | null;
+};
+
+export type MacroSignal = {
+  status: string;        // 'up'|'down'|'stable' / 'none'|'mild'|'moderate'|'severe' / 'bull'|'bear'|'neutral'
+  coefficient: number;
+  riskCoefficient: number;
+  reason: string;
+  bullCount?: number;
+  bearCount?: number;
+  neutralCount?: number;
+};
+
+export type MacroAnalysisData = {
+  industry: MacroSignal;
+  governance: MacroSignal;
+  macro: MacroSignal;
+  totalCoefficient: number;
+  totalRisk: number;
 };
 
 export type FundAnalysisData = {

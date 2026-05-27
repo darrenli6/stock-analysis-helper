@@ -1,0 +1,21 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        # Install pnpm
+        - npm install -g pnpm@10.12.4
+        # Install dependencies
+        - pnpm install --shamefully-hoist
+     
+    build:
+      commands:
+        - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
+        - pnpm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*

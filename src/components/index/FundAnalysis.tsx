@@ -302,7 +302,7 @@ function BlockTradeTable({ trades }: { trades: BlockTrade[] }) {
             <th className="pb-2 text-left">卖方</th>
             <th className="pb-2 text-right">成交价</th>
             <th className="pb-2 text-right">成交额</th>
-            <th className="pb-2 text-right">折溢价率</th>
+         
           </tr>
         </thead>
         <tbody>
@@ -315,9 +315,7 @@ function BlockTradeTable({ trades }: { trades: BlockTrade[] }) {
                 <td className="py-2 max-w-[180px] truncate text-xs">{String(t.SellSalesDepartment ?? "–")}</td>
                 <td className="py-2 text-right">{toNum(t.TurnoverPrice)?.toFixed(2) ?? "–"}</td>
                 <td className="py-2 text-right">{toNum(t.TurnoverValue) !== null ? fmtMoney(toNum(t.TurnoverValue)!) : "–"}</td>
-                <td className={`py-2 text-right ${discount !== null ? (discount >= 0 ? "text-emerald-300" : "text-rose-300") : "text-slate-400"}`}>
-                  {discount !== null ? `${discount >= 0 ? "+" : ""}${discount.toFixed(2)}%` : "–"}
-                </td>
+             
               </tr>
             );
           })}

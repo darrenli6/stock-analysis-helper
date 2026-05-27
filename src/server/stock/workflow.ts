@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { db } from "~/server/db";
 import { travelTaskLogs, travelTasks } from "~/server/db/schema";
 import { env } from "~/env";
-import type { FundAnalysisData } from "~/types";
+import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,6 +83,7 @@ type AnalysisPayload = {
     stopLoss: number | null;
   };
   fundAnalysis: FundAnalysisData | null;
+  macroAnalysis: MacroAnalysisData | null;
 };
 
 type CliResult = {
@@ -681,20 +682,228 @@ function summarizeTechnical(
   };
 }
 
-function summarizeMacro(profile: Record<string, unknown> | null) {
-  const industry =
-    String(profile?.industry ?? profile?.industryName ?? profile?.sector ?? "未披露").trim();
-  const governance =
-    String(profile?.chairman ?? profile?.legalRepresentative ?? profile?.ceo ?? "公开信息有限").trim();
+async function searchBing(query: string): Promise<string | null> {
+  const encoded = encodeURIComponent(query);
+  const url = `https://www.bing.com/search?q=${encoded}&count=8`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+function extractBingSummaries(html: string): string[] {
+  const results: string[] = [];
+  const liPattern = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/g;
+  let m: RegExpExecArray | null;
+  while ((m = liPattern.exec(html)) !== null) {
+    const block = m[1]!;
+    const pMatch = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+    if (pMatch) results.push(pMatch[1]!.replace(/<[^>]+>/g, " ").trim());
+    const hMatch = /<h2[^>]*><a[^>]*>([\s\S]*?)<\/a><\/h2>/i.exec(block);
+    if (hMatch) results.push(hMatch[1]!.replace(/<[^>]+>/g, " ").trim());
+  }
+  if (results.length === 0) {
+    const pAll = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+    let pm: RegExpExecArray | null;
+    let count = 0;
+    while ((pm = pAll.exec(html)) !== null && count < 10) {
+      results.push(pm[1]!.replace(/<[^>]+>/g, " ").trim());
+      count++;
+    }
+  }
+  return results;
+}
+
+async function analyzeMacroIndustry(industry: string, isAshare: boolean): Promise<MacroSignal> {
+  const year = new Date().getFullYear();
+  const queries = isAshare
+    ? [
+        `${industry}行业 ${year} 景气度 趋势`,
+        `${industry}行业 ${year} 市场表现 展望`,
+        `${industry}板块 ${year} 业绩预期`,
+        `${industry}行业周期 ${year} 分析`,
+      ]
+    : [
+        `${industry} industry ${year} trend outlook cycle`,
+        `${industry} sector performance ${year}`,
+        `${industry} market forecast ${year}`,
+        `${industry} growth cycle analysis ${year}`,
+      ];
+
+  const allSummaries: string[] = [];
+  for (const q of queries) {
+    const html = await searchBing(q);
+    if (html) allSummaries.push(...extractBingSummaries(html));
+  }
+
+  if (allSummaries.length === 0) {
+    return { status: "stable", coefficient: 0.9, riskCoefficient: 1.0, reason: "搜索失败，采用保守估计" };
+  }
+
+  const text = allSummaries.join(" ").toLowerCase();
+  const bullKw = isAshare
+    ? ["上行", "景气", "复苏", "增长", "利好", "涨价", "需求旺", "好转", "扩张", "牛市"]
+    : ["bullish", "upward", "growth", "expanding", "boom", "rally", "strong", "positive", "outperformance", "recover"];
+  const bearKw = isAshare
+    ? ["下行", "萎缩", "利空", "下滑", "衰退", "降价", "需求弱", "悲观", "收缩", "熊市"]
+    : ["bearish", "downward", "declining", "recession", "slowdown", "weak", "negative", "underperformance", "contraction"];
+
+  const bull = bullKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const bear = bearKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const neutral = ["stable", "steady", "neutral", "moderate", "cautious", "稳健", "平稳", "中性"].reduce(
+    (n, k) => n + (text.split(k).length - 1), 0
+  );
+
+  if (bull > bear + 2) {
+    return { status: "up", coefficient: 1.1, riskCoefficient: 0.9, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `行业处于上行期，市场预期积极，找到 ${bull} 个多头信号` };
+  } else if (bear > bull + 2) {
+    return { status: "down", coefficient: 0.8, riskCoefficient: 1.2, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `行业处于下行期，市场预期悲观，找到 ${bear} 个空头信号` };
+  } else {
+    return { status: "stable", coefficient: 0.9, riskCoefficient: 1.0, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `行业处于平稳期，市场预期中性，找到 ${neutral} 个中性信号` };
+  }
+}
+
+async function analyzeMacroGovernance(company: string, code: string, isAshare: boolean): Promise<MacroSignal> {
+  const queries = isAshare
+    ? [
+        `${company} 欺诈 造假 立案调查`,
+        `${company} 违规 罚款 监管处罚`,
+        `${company} 高管 变动 辞职 内控`,
+        `${company} ${code} 风险 公告`,
+      ]
+    : [
+        `${company} ${code} fraud investigation SEC FBI`,
+        `${company} ${code} management arrest criminal`,
+        `${company} ${code} accounting scandal lawsuit`,
+        `${company} ${code} CEO CFO arrest indictment`,
+      ];
+
+  const allSummaries: string[] = [];
+  for (const q of queries) {
+    const html = await searchBing(q);
+    if (html) allSummaries.push(...extractBingSummaries(html));
+  }
+
+  if (allSummaries.length === 0) {
+    return { status: "none", coefficient: 1.0, riskCoefficient: 1.0, reason: "搜索失败，无法判断治理风险" };
+  }
+
+  const text = allSummaries.join(" ").toLowerCase();
+  const severeKw = isAshare
+    ? ["欺诈", "造假", "刑事", "逮捕", "强制退市", "财务造假", "重大违规", "立案"]
+    : ["fraud", "arrest", "criminal", "indictment", "fbi", "delisting", "accounting scandal", "major violation"];
+  const moderateKw = isAshare
+    ? ["监管处罚", "诉讼", "调查", "警告", "违规", "集体诉讼", "处罚"]
+    : ["sec investigation", "lawsuit", "regulatory", "warning", "investigation", "class action", "violation"];
+  const mildKw = isAshare
+    ? ["高管变动", "辞职", "争议", "纠纷", "内控缺陷"]
+    : ["ceo change", "management change", "director", "resignation", "controversy", "dispute"];
+
+  const severe = severeKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const moderate = moderateKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const mild = mildKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+
+  if (severe >= 5) {
+    return { status: "severe", coefficient: 0.5, riskCoefficient: 2.0, bullCount: 0, bearCount: severe,
+      reason: `公司存在严重治理风险（欺诈/刑事调查等），找到 ${severe} 个严重风险信号，强烈不建议买入` };
+  } else if (moderate >= 5) {
+    return { status: "moderate", coefficient: 0.7, riskCoefficient: 1.3, bullCount: 0, bearCount: moderate,
+      reason: `公司存在中等治理风险（监管处罚/诉讼等），找到 ${moderate} 个中等风险信号，不建议买入` };
+  } else if (mild >= 5) {
+    return { status: "mild", coefficient: 0.9, riskCoefficient: 1.1, bullCount: 0, bearCount: mild,
+      reason: `公司存在轻微治理风险（高管变动等），找到 ${mild} 个轻微风险信号，建议谨慎` };
+  } else {
+    return { status: "none", coefficient: 1.0, riskCoefficient: 1.0, bullCount: 0, bearCount: 0,
+      reason: "公司治理良好，无明显问题" };
+  }
+}
+
+async function analyzeMacroEconomy(isAshare: boolean): Promise<MacroSignal> {
+  const year = new Date().getFullYear();
+  const queries = isAshare
+    ? [
+        `${year} 中国经济 A股 走势展望`,
+        `${year} 央行货币政策 降息 流动性`,
+        `${year} 中国GDP增长 经济预期`,
+        `${year} A股市场 行情分析`,
+      ]
+    : [
+        `${year} US economy outlook stock market`,
+        `${year} Federal Reserve interest rate inflation`,
+        `${year} US economic growth GDP forecast`,
+        `${year} US stock market trend analysis`,
+      ];
+
+  const allSummaries: string[] = [];
+  for (const q of queries) {
+    const html = await searchBing(q);
+    if (html) allSummaries.push(...extractBingSummaries(html));
+  }
+
+  if (allSummaries.length === 0) {
+    return { status: "neutral", coefficient: 1.0, riskCoefficient: 1.0, reason: "搜索失败，采用保守估计" };
+  }
+
+  const text = allSummaries.join(" ").toLowerCase();
+  const bullKw = isAshare
+    ? ["降息", "宽松", "刺激", "流动性", "牛市", "复苏", "增长", "扩张"]
+    : ["rate cut", "stimulus", "liquidity", "bull market", "recovery", "growth", "expansion", "positive"];
+  const bearKw = isAshare
+    ? ["加息", "紧缩", "通胀", "熊市", "衰退", "收缩", "利空"]
+    : ["rate hike", "tightening", "inflation", "bear market", "recession", "contraction", "negative"];
+
+  const bull = bullKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const bear = bearKw.reduce((n, k) => n + (text.split(k).length - 1), 0);
+  const neutral = ["stable", "neutral", "steady", "moderate", "cautious", "稳健", "中性", "平稳"].reduce(
+    (n, k) => n + (text.split(k).length - 1), 0
+  );
+
+  if (bull > bear + 2) {
+    return { status: "bull", coefficient: 1.1, riskCoefficient: 0.9, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `宏观经济利好环境（${isAshare ? "降息/宽松" : "rate cut/stimulus"}），找到 ${bull} 个利好信号` };
+  } else if (bear > bull + 2) {
+    return { status: "bear", coefficient: 0.8, riskCoefficient: 1.2, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `宏观经济利空环境（${isAshare ? "加息/紧缩" : "rate hike/tightening"}），找到 ${bear} 个利空信号` };
+  } else {
+    return { status: "neutral", coefficient: 1.0, riskCoefficient: 1.0, bullCount: bull, bearCount: bear, neutralCount: neutral,
+      reason: `宏观经济环境中性，政策稳健，找到 ${neutral} 个中性信号` };
+  }
+}
+
+async function analyzeMacroWeb(
+  company: string,
+  code: string,
+  industry: string | null
+): Promise<MacroAnalysisData> {
+  const isAshare = /^(sh|sz|bj)\d/i.test(code);
+  const ind = industry ?? (isAshare ? "综合" : "General");
+
+  const [industrySignal, governanceSignal, macroSignal] = await Promise.all([
+    analyzeMacroIndustry(ind, isAshare),
+    analyzeMacroGovernance(company, code, isAshare),
+    analyzeMacroEconomy(isAshare),
+  ]);
 
   return {
-    industryCycle: industry === "未披露" ? "行业信息不足，按中性处理" : `${industry}，需结合景气度跟踪`,
-    governance:
-      governance === "公开信息有限"
-        ? "治理披露有限，建议补充公告与财报核查"
-        : `核心管理层信息已披露，重点关注 ${governance}`,
-    macroEconomy: "宏观环境未接入实时新闻流，当前按中性偏谨慎假设处理。",
-    summary: "宏观模块采用静态信息与保守假设，适合作为初筛，不应替代实时研究。",
+    industry: industrySignal,
+    governance: governanceSignal,
+    macro: macroSignal,
+    totalCoefficient: industrySignal.coefficient * governanceSignal.coefficient * macroSignal.coefficient,
+    totalRisk: industrySignal.riskCoefficient * governanceSignal.riskCoefficient * macroSignal.riskCoefficient,
   };
 }
 
@@ -918,10 +1127,21 @@ export async function processTask(taskId: string) {
     await logTask(taskId, 3, "step_done", "数据采集完成");
 
     await logTask(taskId, 4, "step_start", getStepLabel(4));
-    const macro = summarizeMacro(profileRaw as Record<string, unknown> | null);
-    const backtest = summarizeBacktest(klineList);
+    const profileForMacro = profileRaw as Record<string, unknown> | null;
+    const industry = String(profileForMacro?.industry ?? profileForMacro?.industryName ?? profileForMacro?.sector ?? "").trim() || null;
+    const [macroAnalysis, backtest] = await Promise.all([
+      analyzeMacroWeb(stock.name, stock.code, industry),
+      Promise.resolve(summarizeBacktest(klineList)),
+    ]);
+    const macro = {
+      industryCycle: macroAnalysis.industry.reason,
+      governance: macroAnalysis.governance.reason,
+      macroEconomy: macroAnalysis.macro.reason,
+      summary: `综合调整系数 ${macroAnalysis.totalCoefficient.toFixed(3)}，综合风险系数 ${macroAnalysis.totalRisk.toFixed(3)}`,
+    };
     await logTask(taskId, 4, "log", "宏观和回测模块已生成摘要", {
       macro,
+      macroAnalysis,
       backtest,
     });
     await logTask(taskId, 4, "step_done", "宏观与回测生成完成");
@@ -986,6 +1206,7 @@ export async function processTask(taskId: string) {
       backtest,
       recommendation,
       fundAnalysis,
+      macroAnalysis,
     };
 
     await logTask(taskId, 6, "result", "分析完成", result);

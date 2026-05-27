@@ -1,7 +1,10 @@
 import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
+import { Footer } from "~/components/index/Footer";
+import { DebugJson } from "~/components/index/DebugJson";
 import { FundAnalysis } from "~/components/index/FundAnalysis";
 import { KlineChart } from "~/components/index/KlineChart";
+import { MacroAnalysis } from "~/components/index/MacroAnalysis";
 import { MarketBackdrop } from "~/components/index/MarketBackdrop";
 import type { AnalysisResult, KlineRow, TaskLog, TaskSnapshot } from "~/types";
 
@@ -226,7 +229,7 @@ export default function Home() {
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-[1280px] flex-1">
                 <p className="text-sm uppercase tracking-[0.35em] text-cyan-300/80">
-                  Stock Analysis Console
+                  Stock Analysis Helper
                 </p>
                 <h1 className="mt-3 text-xl font-semibold tracking-tight text-white md:text-6xl xl:whitespace-nowrap xl:text-[4.25rem] 2xl:text-[2.7rem]">
                   股票分析助手，输入自然语言，生成一份可执行的股票分析结果
@@ -460,15 +463,23 @@ export default function Home() {
                   </section>
                 )}
 
-                <section className="grid gap-6 md:grid-cols-2">
-                  <article className="panel rounded-[28px] border border-white/10 p-5">
-                    <h3 className="text-base font-semibold text-white">宏观环境</h3>
-                    <p className="mt-3 text-sm leading-7 text-slate-300">{result.macro.summary}</p>
-                  </article>
-                  <article className="panel rounded-[28px] border border-white/10 p-5">
-                    <h3 className="text-base font-semibold text-white">历史回测</h3>
-                    <p className="mt-3 text-sm leading-7 text-slate-300">{result.backtest.summary}</p>
-                  </article>
+                {result.macroAnalysis && (
+                  <section className="panel rounded-[28px] border border-white/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-base font-semibold text-white">宏观环境分析</h3>
+                      <span className="rounded-full bg-white/8 px-3 py-1 text-xs text-slate-300">
+                        Bing 网络搜索 · 实时分析
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <MacroAnalysis data={result.macroAnalysis} />
+                    </div>
+                  </section>
+                )}
+
+                <section className="panel rounded-[28px] border border-white/10 p-5">
+                  <h3 className="text-base font-semibold text-white">历史回测</h3>
+                  <p className="mt-3 text-sm leading-7 text-slate-300">{result.backtest.summary}</p>
                 </section>
 
                 <section className="grid gap-6 md:grid-cols-2">
@@ -496,16 +507,12 @@ export default function Home() {
                   </div>
                 </section>
 
-                <section className="panel rounded-[28px] border border-white/10 p-5">
-                  <h3 className="text-base font-semibold text-white">调试结果 JSON</h3>
-                  <pre className="mt-4 overflow-x-auto rounded-[20px] bg-slate-950/70 p-4 text-xs leading-6 text-slate-300">
-                    {JSON.stringify(result, null, 2)}
-                  </pre>
-                </section>
+                <DebugJson data={result} />
               </>
             ) : null}
           </section>
         </div>
+        <Footer />
       </main>
     </>
   );
