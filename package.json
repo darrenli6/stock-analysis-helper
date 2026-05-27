@@ -1,5 +1,9 @@
 {
-  "name": "stock-analysis",
+
+  "name": "@darrenli6/stock-analysis-helper",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "version": "1.0.0",
   "private": true,
   "type": "module",
