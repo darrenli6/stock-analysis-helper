@@ -130,6 +130,7 @@ export type AnalysisResult = {
   chipData: ChipData | null;
   shareholderData: ShareholderData | null;
   dividendData: DividendData | null;
+  newsData: NewsData | null;
 };
 
 export type KlineRow = {
@@ -249,4 +250,26 @@ export type DividendRow = {
 export type DividendData = {
   rows: DividendRow[];
   summary: string | null;
+};
+
+// ── 资讯情报（Tavily） ─────────────────────────────────────────────────────────
+
+export type NewsItem = {
+  title: string;
+  url: string;
+  content: string;
+  publishedDate: string | null;
+  score: number | null;
+};
+
+export type NewsCategory = {
+  category: string;   // "公司动态" | "行业分析" | "竞品信息" | "财报业绩"
+  query: string;
+  answer: string | null;
+  items: NewsItem[];
+};
+
+export type NewsData = {
+  categories: NewsCategory[];
+  fetchedAt: string;
 };

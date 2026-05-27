@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { db } from "~/server/db";
 import { travelTaskLogs, travelTasks } from "~/server/db/schema";
 import { env } from "~/env";
-import type { ChipData, DividendData, DividendRow, FinancialAnalysisData, FinancialReport, FundAnalysisData, MacroAnalysisData, MacroSignal, ShareholderCountRow, ShareholderData, ShareholderRow } from "~/types";
+import type { ChipData, DividendData, DividendRow, FinancialAnalysisData, FinancialReport, FundAnalysisData, MacroAnalysisData, MacroSignal, NewsCategory, NewsData, NewsItem, ShareholderCountRow, ShareholderData, ShareholderRow } from "~/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -88,6 +88,7 @@ type AnalysisPayload = {
   chipData: ChipData | null;
   shareholderData: ShareholderData | null;
   dividendData: DividendData | null;
+  newsData: NewsData | null;
 };
 
 type CliResult = {
@@ -759,6 +760,90 @@ ${lines}${yieldInfo}
   } catch {
     return null;
   }
+}
+
+// ── Tavily 资讯情报 ───────────────────────────────────────────────────────────
+
+type TavilyResult = {
+  title: string;
+  url: string;
+  content: string;
+  published_date?: string;
+  score?: number;
+};
+
+type TavilyResponse = {
+  answer?: string;
+  results: TavilyResult[];
+};
+
+async function tavilySearch(query: string): Promise<{ answer: string | null; items: NewsItem[] }> {
+  if (!env.TAVILY_API_KEY) return { answer: null, items: [] };
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: env.TAVILY_API_KEY,
+        query,
+        search_depth: "basic",
+        include_answer: true,
+        max_results: 5,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { answer: null, items: [] };
+    const data = (await res.json()) as TavilyResponse;
+    const items: NewsItem[] = (data.results ?? []).map((r) => ({
+      title: r.title ?? "",
+      url: r.url ?? "",
+      content: r.content ?? "",
+      publishedDate: r.published_date ?? null,
+      score: r.score ?? null,
+    }));
+    return { answer: data.answer?.trim() ?? null, items };
+  } catch {
+    return { answer: null, items: [] };
+  }
+}
+
+async function fetchNewsData(
+  name: string,
+  code: string,
+  industry: string | null
+): Promise<NewsData | null> {
+  if (!env.TAVILY_API_KEY) return null;
+
+  const isUs = code.startsWith("us");
+  const isHk = code.startsWith("hk");
+  const ticker = isUs ? code.slice(2).toUpperCase() : code;
+  const indLabel = industry ?? (isUs ? "Technology" : isHk ? "综合" : "综合");
+
+  const queries = isUs
+    ? [
+        { category: "公司动态", query: `${name} ${ticker} latest news announcement 2024 2025` },
+        { category: "行业分析", query: `${indLabel} industry trend report analysis 2025` },
+        { category: "竞品信息", query: `${name} ${ticker} competitors comparison market share` },
+        { category: "财报业绩", query: `${name} ${ticker} earnings revenue profit quarterly results` },
+      ]
+    : [
+        { category: "公司动态", query: `${name} ${ticker} 最新新闻 公告 动态 2025` },
+        { category: "行业分析", query: `${name} ${indLabel}行业 趋势 报告 分析 2025` },
+        { category: "竞品信息", query: `${name} 竞争对手 竞品 市场份额 行业对比` },
+        { category: "财报业绩", query: `${name} ${ticker} 最新财报 业绩 营收 利润 季报年报` },
+      ];
+
+  const results = await Promise.all(
+    queries.map(async ({ category, query }) => {
+      const { answer, items } = await tavilySearch(query);
+      return { category, query, answer, items } satisfies NewsCategory;
+    })
+  );
+
+  const hasAny = results.some((r) => r.items.length > 0);
+  if (!hasAny) return null;
+
+  return { categories: results, fetchedAt: new Date().toISOString() };
 }
 
 type FundCommands = {
@@ -1562,13 +1647,14 @@ export async function processTask(taskId: string) {
     await logTask(taskId, 4, "step_start", getStepLabel(4));
     const profileForMacro = profileRaw as Record<string, unknown> | null;
     const industry = String(profileForMacro?.industry ?? profileForMacro?.industryName ?? profileForMacro?.sector ?? "").trim() || null;
-    const [macroAnalysis, backtest, financialSummary, chipSummary, shareholderSummary, dividendSummary] = await Promise.all([
+    const [macroAnalysis, backtest, financialSummary, chipSummary, shareholderSummary, dividendSummary, newsData] = await Promise.all([
       analyzeMacroWeb(stock.name, stock.code, industry),
       Promise.resolve(summarizeBacktest(klineList)),
       generateFinancialSummary(stock.name, stock.code, normalizedReports),
       chipRaw ? generateChipSummary(stock.name, stock.code, chipRaw) : Promise.resolve(null),
       shareholderRaw.top10.length > 0 ? generateShareholderSummary(stock.name, stock.code, shareholderRaw) : Promise.resolve(null),
       dividendRaw.rows.length > 0 ? generateDividendSummary(stock.name, stock.code, dividendRaw, currentPrice) : Promise.resolve(null),
+      fetchNewsData(stock.name, stock.code, industry),
     ]);
 
     const financialAnalysis: FinancialAnalysisData | null =
@@ -1665,6 +1751,7 @@ export async function processTask(taskId: string) {
       chipData,
       shareholderData,
       dividendData,
+      newsData,
     };
 
     await logTask(taskId, 6, "result", "分析完成", result);
