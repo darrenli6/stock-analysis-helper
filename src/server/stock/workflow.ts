@@ -9,14 +9,17 @@ import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
 
 const execFileAsync = promisify(execFile);
 
-// Prefer the vendor copy bundled inside the deployment artifact (_vendor/).
-// Fall back to the standard node_modules path for local dev.
-const WESTOCK_SCRIPT = (() => {
-  const vendor = path.join(process.cwd(), "_vendor", "westock-data-clawhub", "scripts", "index.js");
-  const local  = path.join(process.cwd(), "node_modules", "westock-data-clawhub", "scripts", "index.js");
-  // Use vendor path in production (Amplify sets NODE_ENV=production); local otherwise
-  return process.env.NODE_ENV === "production" ? vendor : local;
-})();
+// With next.config.js output:"standalone" + outputFileTracingIncludes, Next.js copies
+// westock-data-clawhub into .next/standalone/node_modules/ at build time.
+// At SSR runtime process.cwd() is the standalone root, so this path resolves correctly
+// both locally (standard node_modules) and in Amplify (standalone node_modules).
+const WESTOCK_SCRIPT = path.join(
+  process.cwd(),
+  "node_modules",
+  "westock-data-clawhub",
+  "scripts",
+  "index.js"
+);
 
 type IntentResult = {
   supported: boolean;

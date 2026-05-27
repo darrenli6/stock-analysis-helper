@@ -12,12 +12,12 @@ frontend:
       commands:
         - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
         - pnpm run build
-        # Copy westock into .next/_vendor/ — avoids Amplify's automatic node_modules exclusion
-        # westock-data-clawhub has zero external dependencies so this single folder is sufficient
-        - mkdir -p .next/_vendor/westock-data-clawhub
-        - cp -r node_modules/westock-data-clawhub/. .next/_vendor/westock-data-clawhub/
+        # Standalone output needs static assets copied in manually
+        - cp -r public .next/standalone/public
+        - cp -r .next/static .next/standalone/.next/static
   artifacts:
-    baseDirectory: .next
+    # next.config.js sets output:"standalone" — deploy the self-contained bundle
+    baseDirectory: .next/standalone
     files:
       - '**/*'
   cache:
