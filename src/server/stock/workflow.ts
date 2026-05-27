@@ -1,6 +1,5 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { execFile } from "node:child_process";
-import path from "node:path";
 import { promisify } from "node:util";
 import { db } from "~/server/db";
 import { travelTaskLogs, travelTasks } from "~/server/db/schema";
@@ -8,18 +7,6 @@ import { env } from "~/env";
 import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
 
 const execFileAsync = promisify(execFile);
-
-// With next.config.js output:"standalone" + outputFileTracingIncludes, Next.js copies
-// westock-data-clawhub into .next/standalone/node_modules/ at build time.
-// At SSR runtime process.cwd() is the standalone root, so this path resolves correctly
-// both locally (standard node_modules) and in Amplify (standalone node_modules).
-const WESTOCK_SCRIPT = path.join(
-  process.cwd(),
-  "node_modules",
-  "westock-data-clawhub",
-  "scripts",
-  "index.js"
-);
 
 type IntentResult = {
   supported: boolean;
@@ -346,10 +333,10 @@ async function setTaskStatus(
 
 async function runWestockCommand(args: string[]) {
   const startedAt = Date.now();
-  const command = ["node", WESTOCK_SCRIPT, ...args].join(" ");
+  const command = ["npx", "-y", "westock-data-clawhub@1.0.4", ...args].join(" ");
   console.log("[westock] start", command);
 
-  const { stdout, stderr } = await execFileAsync("node", [WESTOCK_SCRIPT, ...args], {
+  const { stdout, stderr } = await execFileAsync("npx", ["-y", "westock-data-clawhub@1.0.4", ...args], {
     cwd: process.cwd(),
     maxBuffer: 1024 * 1024 * 10,
   });
