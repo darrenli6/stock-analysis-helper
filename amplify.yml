@@ -5,17 +5,22 @@ frontend:
       commands:
         # Install pnpm
         - npm install -g pnpm@10.12.4
-        # Install dependencies
+        # Install dependencies (--shamefully-hoist flattens node_modules for CJS compat)
         - pnpm install --shamefully-hoist
-     
+
     build:
       commands:
         - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
         - pnpm run build
   artifacts:
-    baseDirectory: .next
+    # Deploy from project root so node_modules is available to the SSR compute function
+    baseDirectory: .
     files:
-      - '**/*'
+      - '.next/**/*'
+      - 'node_modules/**/*'
+      - 'package.json'
+      - 'next.config.js'
+      - 'public/**/*'
   cache:
     paths:
       - node_modules/**/*
