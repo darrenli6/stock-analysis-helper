@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { db } from "~/server/db";
 import { travelTaskLogs, travelTasks } from "~/server/db/schema";
 import { env } from "~/env";
-import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
+import type { ChipData, DividendData, DividendRow, FinancialAnalysisData, FinancialReport, FundAnalysisData, MacroAnalysisData, MacroSignal, ShareholderCountRow, ShareholderData, ShareholderRow } from "~/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -84,6 +84,10 @@ type AnalysisPayload = {
   };
   fundAnalysis: FundAnalysisData | null;
   macroAnalysis: MacroAnalysisData | null;
+  financialAnalysis: FinancialAnalysisData | null;
+  chipData: ChipData | null;
+  shareholderData: ShareholderData | null;
+  dividendData: DividendData | null;
 };
 
 type CliResult = {
@@ -357,6 +361,388 @@ async function runWestockCommand(args: string[]) {
   });
 
   return { stdout, parsed } satisfies CliResult;
+}
+
+// ── 财务报表多段落解析 ────────────────────────────────────────────────────────
+
+const SECTION_KEY_MAP: Record<string, string> = {
+  "十大股东": "top10",
+  "十大流通股东": "top10liquid",
+  "股东户数统计": "holdercount",
+  "分红历史": "dividend",
+};
+
+function normalizeSectionKey(raw: string): string {
+  return SECTION_KEY_MAP[raw] ?? raw.toLowerCase();
+}
+
+function parseMultiSectionMarkdown(stdout: string): Record<string, Record<string, unknown>[]> {
+  const result: Record<string, Record<string, unknown>[]> = {};
+  const lines = stdout.split("\n");
+  let currentSection = "";
+  let sectionLines: string[] = [];
+
+  const flush = () => {
+    if (currentSection && sectionLines.length > 0) {
+      const records = parseMarkdownTable(sectionLines.join("\n"));
+      if (records) result[currentSection] = records;
+    }
+    sectionLines = [];
+  };
+
+  for (const line of lines) {
+    const sectionMatch = /^\*\*([^*]+)\*\*$/.exec(line.trim());
+    if (sectionMatch) {
+      flush();
+      currentSection = normalizeSectionKey(sectionMatch[1]!.trim());
+    } else {
+      sectionLines.push(line);
+    }
+  }
+  flush();
+
+  return result;
+}
+
+function normalizeFinanceReports(
+  lrbRows: Record<string, unknown>[] | null,
+  zcfzRows: Record<string, unknown>[] | null,
+  xjllRows: Record<string, unknown>[] | null,
+  market: "as" | "hk" | "us"
+): FinancialReport[] {
+  const incomeRows = lrbRows ?? [];
+  if (incomeRows.length === 0) return [];
+
+  return incomeRows.map((lrb) => {
+    const period = String(lrb.EndDate ?? lrb._date ?? "");
+
+    // Match balance-sheet / cash-flow rows by period
+    const zcfz = zcfzRows?.find((r) => String(r.EndDate ?? r._date) === period) ?? null;
+    const xjll = xjllRows?.find((r) => String(r.EndDate ?? r._date) === period) ?? null;
+
+    let revenue: number | null = null;
+    let netProfit: number | null = null;
+    let operatingProfit: number | null = null;
+    let eps: number | null = null;
+    let grossMargin: number | null = null;
+    let netMargin: number | null = null;
+
+    if (market === "us") {
+      revenue = toNumber(lrb.Sales_Q);
+      netProfit = toNumber(lrb.NetIncome_Q);
+      operatingProfit = toNumber(lrb.EBIT_Q);
+      eps = toNumber(lrb.BasicEPS_Q);
+      const gm = toNumber(lrb.GrossMargin_Q);
+      grossMargin = gm !== null ? gm / 100 : null;
+      const nm = toNumber(lrb.NetMargin_Q);
+      netMargin = nm !== null ? nm / 100 : null;
+    } else {
+      // A-share lrb / HK zhsy
+      revenue = toNumber(lrb.OperatingRevenue ?? lrb.OperatingIncome);
+      netProfit = toNumber(lrb.NPParentCompanyOwners ?? lrb.ProfitToShareholders ?? lrb.EarningAfterTax);
+      operatingProfit = toNumber(lrb.OperatingProfit);
+      eps = toNumber(lrb.BasicEPS);
+      if (revenue !== null && revenue !== 0) {
+        if (netProfit !== null) netMargin = netProfit / revenue;
+        if (operatingProfit !== null) grossMargin = operatingProfit / revenue;
+      }
+      // HK zhsy may carry ratio directly
+      const hkGm = toNumber((lrb as Record<string, unknown>).GrossIncomeRatio);
+      if (hkGm !== null) grossMargin = hkGm / 100;
+    }
+
+    // Balance sheet
+    let totalAssets: number | null = null;
+    let totalLiabilities: number | null = null;
+    let equity: number | null = null;
+    let cash: number | null = null;
+    let debtRatio: number | null = null;
+
+    if (zcfz) {
+      totalAssets = toNumber(zcfz.TotalAssets);
+      totalLiabilities = toNumber(zcfz.TotalLiability ?? zcfz.TotalLiabilities);
+      equity = toNumber(zcfz.TotalShareholderEquity ?? zcfz.SEWithoutMI);
+      cash = toNumber(zcfz.CashEquivalents);
+      if (totalAssets !== null && totalAssets !== 0 && totalLiabilities !== null) {
+        debtRatio = totalLiabilities / totalAssets;
+      }
+      // HK zhsy may carry ratio in income row
+      const hkDr = toNumber((lrb as Record<string, unknown>).DebtAssetsRatio);
+      if (hkDr !== null) debtRatio = hkDr / 100;
+    }
+
+    // Cash flow
+    let operatingCF: number | null = null;
+    let investingCF: number | null = null;
+    let financingCF: number | null = null;
+    let fcff: number | null = null;
+
+    if (xjll) {
+      operatingCF = toNumber(xjll.NetOperateCashFlow ?? xjll.OperatingCashFlow);
+      investingCF = toNumber(xjll.NetInvestCashFlow ?? xjll.InvestingCashFlow);
+      financingCF = toNumber(xjll.NetFinanceCashFlow ?? xjll.FinancingCashFlow);
+      fcff = toNumber(xjll.FCFF);
+    }
+
+    return {
+      period,
+      revenue,
+      netProfit,
+      operatingProfit,
+      eps,
+      grossMargin,
+      netMargin,
+      totalAssets,
+      totalLiabilities,
+      equity,
+      cash,
+      debtRatio,
+      operatingCF,
+      investingCF,
+      financingCF,
+      fcff,
+    };
+  });
+}
+
+function fmtCompact(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1e8) return `${(v / 1e8).toFixed(2)}亿`;
+  if (abs >= 1e4) return `${(v / 1e4).toFixed(0)}万`;
+  return v.toFixed(2);
+}
+
+async function generateFinancialSummary(
+  company: string,
+  code: string,
+  reports: FinancialReport[]
+): Promise<string | null> {
+  if (!env.OPENAI_API_KEY || reports.length === 0) return null;
+
+  const lines = reports
+    .map((r) => {
+      const parts: string[] = [`[${r.period}]`];
+      if (r.revenue !== null) parts.push(`营收${fmtCompact(r.revenue)}`);
+      if (r.netProfit !== null) parts.push(`净利${fmtCompact(r.netProfit)}`);
+      if (r.eps !== null) parts.push(`EPS${r.eps.toFixed(2)}`);
+      if (r.grossMargin !== null) parts.push(`毛利率${(r.grossMargin * 100).toFixed(1)}%`);
+      if (r.netMargin !== null) parts.push(`净利率${(r.netMargin * 100).toFixed(1)}%`);
+      if (r.debtRatio !== null) parts.push(`负债率${(r.debtRatio * 100).toFixed(1)}%`);
+      if (r.operatingCF !== null) parts.push(`经营现金流${fmtCompact(r.operatingCF)}`);
+      return parts.join(" ");
+    })
+    .join("\n");
+
+  const prompt = `你是专业股票投资分析师。请基于以下${reports.length}期财务数据对${company}(${code})进行简洁的财务分析：
+
+${lines}
+
+要求（不超过220字）：
+1. 盈利趋势与质量（营收+净利润变化、净利率水平）
+2. 财务健康（资产负债率、现金流）
+3. 综合财务评分 0-10 分（格式："综合评分：X/10"）
+4. 一句话投资价值判断
+
+用中文输出，语言简洁专业。`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        input: [{ role: "user", content: prompt }],
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { output_text?: string };
+    return data.output_text?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── 筹码成本 ─────────────────────────────────────────────────────────────────
+
+function normalizeChipData(rows: Record<string, unknown>[] | null): ChipData | null {
+  const row = rows?.[0];
+  if (!row) return null;
+  return {
+    date: String(row.date ?? ""),
+    closePrice: toNumber(row.closePrice),
+    chipProfitRate: toNumber(row.chipProfitRate),
+    chipAvgCost: toNumber(row.chipAvgCost),
+    chipConcentration90: toNumber(row.chipConcentration90),
+    chipConcentration70: toNumber(row.chipConcentration70),
+    summary: null,
+  };
+}
+
+async function generateChipSummary(company: string, code: string, chip: ChipData): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) return null;
+
+  const lines: string[] = [];
+  if (chip.closePrice !== null) lines.push(`当前价${chip.closePrice}`);
+  if (chip.chipAvgCost !== null) lines.push(`筹码均价${chip.chipAvgCost}`);
+  if (chip.chipProfitRate !== null) lines.push(`获利盘${chip.chipProfitRate}%`);
+  if (chip.chipConcentration70 !== null) lines.push(`70%筹码集中度${chip.chipConcentration70}%`);
+  if (chip.chipConcentration90 !== null) lines.push(`90%筹码集中度${chip.chipConcentration90}%`);
+
+  const prompt = `你是专业股票分析师。基于${company}(${code})最新筹码数据分析：
+${lines.join("，")}
+
+要求（不超过150字）：
+1. 当前价格与筹码均价关系（套牢盘还是获利盘为主）
+2. 筹码集中度分析（是否密集，是否有较强支撑/压力）
+3. 一句话操作建议
+
+用中文输出，简洁专业。`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o-mini", input: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { output_text?: string };
+    return data.output_text?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── 股东结构 ─────────────────────────────────────────────────────────────────
+
+function normalizeShareholderData(
+  top10Rows: Record<string, unknown>[] | null,
+  top10LiquidRows: Record<string, unknown>[] | null,
+  holderCountRows: Record<string, unknown>[] | null,
+  reportDate: string | null
+): ShareholderData {
+  const mapRow = (r: Record<string, unknown>): ShareholderRow => ({
+    no: toNumber(r.no),
+    name: String(r.name ?? ""),
+    holdShares: toNumber(r.holdShares),
+    holdPct: toNumber(r.holdPct),
+    holdChange: toNumber(r.holdChange),
+  });
+
+  const holderCount: ShareholderCountRow[] = (holderCountRows ?? []).map((r) => ({
+    date: String(r.date ?? ""),
+    totalSHNum: toNumber(r.totalSHNum),
+    avgHoldShares: toNumber(r.avgHoldShares),
+  }));
+
+  return {
+    reportDate,
+    top10: (top10Rows ?? []).map(mapRow),
+    top10Liquid: (top10LiquidRows ?? []).map(mapRow),
+    holderCount,
+    summary: null,
+  };
+}
+
+async function generateShareholderSummary(
+  company: string,
+  code: string,
+  data: ShareholderData
+): Promise<string | null> {
+  if (!env.OPENAI_API_KEY) return null;
+
+  const top3 = data.top10.slice(0, 3).map((r) => `${r.name}持股${r.holdPct ?? "–"}%`).join("；");
+  const latest = data.holderCount[0];
+  const prev = data.holderCount[1];
+  const holderTrend = latest && prev && latest.totalSHNum !== null && prev.totalSHNum !== null
+    ? `股东户数从${prev.totalSHNum}变为${latest.totalSHNum}（${latest.totalSHNum > prev.totalSHNum ? "增加" : "减少"}）`
+    : latest ? `最新股东户数${latest.totalSHNum}` : "";
+
+  const prompt = `你是专业股票分析师。分析${company}(${code})股东结构：
+前三大股东：${top3}
+${holderTrend}
+
+要求（不超过150字）：
+1. 股权集中度评估（是否高度集中，对散户有何影响）
+2. 股东户数变化趋势（筹码是否在集中/分散）
+3. 一句话操作参考
+
+用中文输出，简洁专业。`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o-mini", input: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const data2 = (await res.json()) as { output_text?: string };
+    return data2.output_text?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── 分红数据 ─────────────────────────────────────────────────────────────────
+
+function normalizeDividendData(rows: Record<string, unknown>[] | null): DividendData {
+  if (!rows || rows.length === 0) return { rows: [], summary: null };
+  const mapped: DividendRow[] = rows.map((r) => ({
+    reportEndDate: String(r.reportEndDate ?? ""),
+    dividendType: String(r.dividendType ?? "") || null,
+    cashDiviRMB: toNumber(r.cashDiviRMB),
+    dividendPlan: String(r.dividendPlan ?? "") || null,
+    exDiviDate: String(r.exDiviDate ?? "") || null,
+  }));
+  return { rows: mapped, summary: null };
+}
+
+async function generateDividendSummary(
+  company: string,
+  code: string,
+  data: DividendData,
+  currentPrice: number | null
+): Promise<string | null> {
+  if (!env.OPENAI_API_KEY || data.rows.length === 0) return null;
+
+  const lines = data.rows.slice(0, 5).map((r) => {
+    const yr = String(r.reportEndDate).slice(0, 4);
+    const div = r.cashDiviRMB !== null ? `派息${r.cashDiviRMB}元/10股` : "无派息";
+    return `${yr} ${div}`;
+  }).join("；");
+
+  const yieldInfo = currentPrice && data.rows[0]?.cashDiviRMB
+    ? `，当前股息率约${((data.rows[0].cashDiviRMB / 10 / currentPrice) * 100).toFixed(2)}%`
+    : "";
+
+  const prompt = `你是专业股票分析师。分析${company}(${code})分红历史：
+${lines}${yieldInfo}
+
+要求（不超过150字）：
+1. 分红稳定性与成长性评估
+2. 当前股息率是否具有吸引力
+3. 一句话价值投资参考
+
+用中文输出，简洁专业。`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o-mini", input: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const data2 = (await res.json()) as { output_text?: string };
+    return data2.output_text?.trim() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 type FundCommands = {
@@ -1043,18 +1429,24 @@ export async function processTask(taskId: string) {
 
     await logTask(taskId, 3, "step_start", getStepLabel(3));
     const fundCmds = buildFundCommands(stock.code);
+    const isAshare = /^(sh|sz|bj)\d/i.test(stock.code);
+    const isHkOrAs = !stock.code.startsWith("us");
     const [
       klineResult, technicalResult, profileResult, financeResult,
       fundResult, marginResult, lhbResult, blockTradeResult,
+      chipResult, shareholderResult, dividendResult,
     ] = await Promise.all([
       runWestockCommand(["kline", stock.code, "--period", "day", "--limit", "180"]),
       runWestockCommand(["technical", stock.code, "--group", "all"]),
       runWestockCommand(["profile", stock.code]),
-      runWestockCommand(["finance", stock.code, "--num", "1"]),
+      runWestockCommand(["finance", stock.code, "--num", "4"]),
       maybeRun(fundCmds.fund),
       maybeRun(fundCmds.margin),
       maybeRun(fundCmds.lhb),
       maybeRun(fundCmds.blockTrade),
+      isAshare ? maybeRun(["chip", stock.code]) : Promise.resolve(null),
+      isHkOrAs ? maybeRun(["shareholder", stock.code]) : Promise.resolve(null),
+      maybeRun(["dividend", stock.code, "--years", "5"]),
     ]);
 
     const klineList =
@@ -1090,6 +1482,32 @@ export async function processTask(taskId: string) {
       (financeResult.parsed as Record<string, unknown> | null) ??
       ({ raw: financeResult.stdout.slice(0, 2000) } as Record<string, unknown>);
 
+    // Parse multi-section finance output (lrb / zcfz / xjll for A/HK; income/balance/cashflow for US)
+    const financeSections = parseMultiSectionMarkdown(financeResult.stdout);
+    const lrbKey = financeSections["lrb"] ? "lrb" : financeSections["zhsy"] ? "zhsy" : "income";
+    const lrbRows = financeSections[lrbKey] ?? null;
+    const zcfzRows = financeSections["zcfz"] ?? null;
+    const xjllRows = financeSections["xjll"] ?? financeSections["cashflow"] ?? null;
+    const normalizedReports = normalizeFinanceReports(lrbRows, zcfzRows, xjllRows, fundCmds.market);
+
+    // Chip
+    const chipRaw = normalizeChipData(toRows(chipResult));
+
+    // Shareholder
+    const shareholderSections = shareholderResult ? parseMultiSectionMarkdown(shareholderResult.stdout) : {};
+    const shareholderDateMatch = shareholderResult ? /\((\d{4}-\d{2}-\d{2})\)/.exec(shareholderResult.stdout) : null;
+    const shareholderReportDate = shareholderDateMatch?.[1] ?? null;
+    const shareholderRaw = normalizeShareholderData(
+      shareholderSections["top10"] ?? null,
+      shareholderSections["top10liquid"] ?? null,
+      shareholderSections["holdercount"] ?? null,
+      shareholderReportDate
+    );
+
+    // Dividend
+    const dividendSections = dividendResult ? parseMultiSectionMarkdown(dividendResult.stdout) : {};
+    const dividendRaw = normalizeDividendData(dividendSections["dividend"] ?? null);
+
     const latestBar = klineList.at(-1) ?? null;
     const currentPrice = latestBar
       ? toNumber(
@@ -1119,16 +1537,40 @@ export async function processTask(taskId: string) {
       marginRows: fundAnalysis.margin?.length ?? 0,
       lhbRows: fundAnalysis.lhb?.length ?? 0,
       blockTradeRows: fundAnalysis.blockTrade?.length ?? 0,
+      hasChip: Boolean(chipRaw),
+      shareholderTop10: shareholderRaw.top10.length,
+      dividendRows: dividendRaw.rows.length,
     });
     await logTask(taskId, 3, "step_done", "数据采集完成");
 
     await logTask(taskId, 4, "step_start", getStepLabel(4));
     const profileForMacro = profileRaw as Record<string, unknown> | null;
     const industry = String(profileForMacro?.industry ?? profileForMacro?.industryName ?? profileForMacro?.sector ?? "").trim() || null;
-    const [macroAnalysis, backtest] = await Promise.all([
+    const [macroAnalysis, backtest, financialSummary, chipSummary, shareholderSummary, dividendSummary] = await Promise.all([
       analyzeMacroWeb(stock.name, stock.code, industry),
       Promise.resolve(summarizeBacktest(klineList)),
+      generateFinancialSummary(stock.name, stock.code, normalizedReports),
+      chipRaw ? generateChipSummary(stock.name, stock.code, chipRaw) : Promise.resolve(null),
+      shareholderRaw.top10.length > 0 ? generateShareholderSummary(stock.name, stock.code, shareholderRaw) : Promise.resolve(null),
+      dividendRaw.rows.length > 0 ? generateDividendSummary(stock.name, stock.code, dividendRaw, currentPrice) : Promise.resolve(null),
     ]);
+
+    const financialAnalysis: FinancialAnalysisData | null =
+      normalizedReports.length > 0
+        ? {
+            market: fundCmds.market,
+            currency: inferCurrency(stock.code),
+            periods: normalizedReports,
+            summary: financialSummary,
+          }
+        : null;
+
+    const chipData: ChipData | null = chipRaw ? { ...chipRaw, summary: chipSummary } : null;
+    const shareholderData: ShareholderData | null =
+      shareholderRaw.top10.length > 0 ? { ...shareholderRaw, summary: shareholderSummary } : null;
+    const dividendData: DividendData | null =
+      dividendRaw.rows.length > 0 ? { ...dividendRaw, summary: dividendSummary } : null;
+
     const macro = {
       industryCycle: macroAnalysis.industry.reason,
       governance: macroAnalysis.governance.reason,
@@ -1203,6 +1645,10 @@ export async function processTask(taskId: string) {
       recommendation,
       fundAnalysis,
       macroAnalysis,
+      financialAnalysis,
+      chipData,
+      shareholderData,
+      dividendData,
     };
 
     await logTask(taskId, 6, "result", "分析完成", result);

@@ -1,11 +1,16 @@
 import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
 import { Footer } from "~/components/index/Footer";
+import { ChipAnalysis } from "~/components/index/ChipAnalysis";
 import { DebugJson } from "~/components/index/DebugJson";
+import { DividendAnalysis } from "~/components/index/DividendAnalysis";
+import { FinancialAnalysis } from "~/components/index/FinancialAnalysis";
 import { FundAnalysis } from "~/components/index/FundAnalysis";
 import { KlineChart } from "~/components/index/KlineChart";
 import { MacroAnalysis } from "~/components/index/MacroAnalysis";
 import { MarketBackdrop } from "~/components/index/MarketBackdrop";
+import { MarketPulse } from "~/components/index/MarketPulse";
+import { ShareholderAnalysis } from "~/components/index/ShareholderAnalysis";
 import type { AnalysisResult, KlineRow, TaskLog, TaskSnapshot } from "~/types";
 
 const EXAMPLE_PROMPTS = [
@@ -471,6 +476,25 @@ export default function Home() {
                   </div>
                 </section>
 
+                {result.financialAnalysis && (
+                  <section className="panel rounded-[28px] border border-white/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-base font-semibold text-white">财务报表分析</h3>
+                      <span className="rounded-full bg-white/8 px-3 py-1 text-xs text-slate-300">
+                        {result.financialAnalysis.market === "hk"
+                          ? "港股财报"
+                          : result.financialAnalysis.market === "us"
+                            ? "美股财报"
+                            : "A 股财报"}{" "}
+                        · 近 {result.financialAnalysis.periods.length} 期
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <FinancialAnalysis data={result.financialAnalysis} />
+                    </div>
+                  </section>
+                )}
+
                 {result.fundAnalysis && (
                   <section className="panel rounded-[28px] border border-white/10 p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -495,6 +519,48 @@ export default function Home() {
                     </div>
                     <div className="mt-4">
                       <MacroAnalysis data={result.macroAnalysis} />
+                    </div>
+                  </section>
+                )}
+
+                {result.chipData && (
+                  <section className="panel rounded-[28px] border border-white/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-base font-semibold text-white">筹码成本分析</h3>
+                      <span className="rounded-full bg-white/8 px-3 py-1 text-xs text-slate-300">
+                        仅沪深A股
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <ChipAnalysis data={result.chipData} />
+                    </div>
+                  </section>
+                )}
+
+                {result.shareholderData && (
+                  <section className="panel rounded-[28px] border border-white/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-base font-semibold text-white">股东结构分析</h3>
+                      <span className="rounded-full bg-white/8 px-3 py-1 text-xs text-slate-300">
+                        {result.fundAnalysis?.market === "hk" ? "港股股东" : "A股股东"}
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <ShareholderAnalysis data={result.shareholderData} />
+                    </div>
+                  </section>
+                )}
+
+                {result.dividendData && (
+                  <section className="panel rounded-[28px] border border-white/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-base font-semibold text-white">分红数据分析</h3>
+                      <span className="rounded-full bg-white/8 px-3 py-1 text-xs text-slate-300">
+                        近 5 年分红
+                      </span>
+                    </div>
+                    <div className="mt-4">
+                      <DividendAnalysis data={result.dividendData} />
                     </div>
                   </section>
                 )}
@@ -535,6 +601,7 @@ export default function Home() {
           </section>
         </div>
         <Footer />
+        <MarketPulse />
       </main>
     </>
   );
