@@ -1,5 +1,6 @@
 import Head from "next/head";
 import { useEffect, useState } from "react";
+import { ActionMenu } from "~/components/index/ActionMenu";
 import { ChipAnalysis } from "~/components/index/ChipAnalysis";
 import { CompanyProfile } from "~/components/index/CompanyProfile";
 import { DebugJson } from "~/components/index/DebugJson";
@@ -160,8 +161,9 @@ export default function Home() {
         />
       </Head>
       <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_#15304c,_#08131f_45%,_#05080d)] px-4 py-8 text-slate-100 xl:px-6 2xl:px-8">
+        {result && <ActionMenu result={result} />}
         <MarketBackdrop />
-        <div className="relative z-10 mx-auto flex w-full max-w-[1720px] flex-col gap-6">
+        <div className={`relative z-10 mx-auto flex w-full max-w-[1720px] flex-col gap-6 ${result ? "pt-10" : ""}`}>
           <SearchPanel status={status} onSubmit={(input) => void handleSubmit(input)} error={error} />
 
           <section className="flex flex-col gap-6">

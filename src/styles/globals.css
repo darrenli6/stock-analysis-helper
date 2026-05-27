@@ -364,3 +364,51 @@ html[data-theme="light"] .market-backdrop__glow--left {
 html[data-theme="light"] .market-backdrop__glow--right {
   background: radial-gradient(circle, rgba(56, 189, 248, 0.08), transparent 68%);
 }
+
+/* ─── Print / PDF ──────────────────────────────────────────────────────────── */
+@media print {
+  /* 强制亮色背景，避免深色背景印出全黑 */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body,
+  body::before,
+  main {
+    background: #fff !important;
+    color: #1e293b !important;
+  }
+
+  /* 隐藏装饰性与交互性元素 */
+  .market-backdrop,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* 面板改为白底细边框 */
+  .panel {
+    background: #fff !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+  }
+
+  /* 文字颜色修复 */
+  .text-white { color: #1e293b !important; }
+  .text-slate-100 { color: #1e293b !important; }
+  .text-slate-200 { color: #334155 !important; }
+  .text-slate-300 { color: #475569 !important; }
+  .text-slate-400 { color: #64748b !important; }
+
+  /* 分页控制：避免卡片被截断 */
+  section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 隐藏调试 JSON */
+  [data-debug-json] {
+    display: none !important;
+  }
+}
