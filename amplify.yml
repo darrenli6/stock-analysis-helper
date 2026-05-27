@@ -12,11 +12,10 @@ frontend:
       commands:
         - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
         - pnpm run build
-        # Copy westock package into .next so it's available at SSR runtime
-        # (Amplify deploys .next contents to /tmp/app, so process.cwd()/node_modules must live here)
-        # westock-data-clawhub has zero external dependencies — copying the single folder is enough
-        - mkdir -p .next/node_modules/westock-data-clawhub
-        - cp -r node_modules/westock-data-clawhub/. .next/node_modules/westock-data-clawhub/
+        # Copy westock into .next/_vendor/ — avoids Amplify's automatic node_modules exclusion
+        # westock-data-clawhub has zero external dependencies so this single folder is sufficient
+        - mkdir -p .next/_vendor/westock-data-clawhub
+        - cp -r node_modules/westock-data-clawhub/. .next/_vendor/westock-data-clawhub/
   artifacts:
     baseDirectory: .next
     files:
