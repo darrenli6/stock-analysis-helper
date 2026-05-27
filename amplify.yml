@@ -12,12 +12,8 @@ frontend:
       commands:
         - env | grep -e DATABASE_URL -e OPENAI_API_KEY -e AUTH_SECRET -e NODE_ENV >> .env || true
         - pnpm run build
-        # Standalone output needs static assets copied in manually
-        - cp -r public .next/standalone/public
-        - cp -r .next/static .next/standalone/.next/static
   artifacts:
-    # next.config.js sets output:"standalone" — deploy the self-contained bundle
-    baseDirectory: .next/standalone
+    baseDirectory: .next
     files:
       - '**/*'
   cache:
