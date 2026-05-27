@@ -8,8 +8,13 @@ import { MacroAnalysis } from "~/components/index/MacroAnalysis";
 import { MarketBackdrop } from "~/components/index/MarketBackdrop";
 import type { AnalysisResult, KlineRow, TaskLog, TaskSnapshot } from "~/types";
 
-const demoPrompt =
-  "分析腾讯控股现在是否适合买入，给我技术指标、宏观环境、历史回测和止盈止损建议";
+const EXAMPLE_PROMPTS = [
+  "分析贵州茅台现在是否适合买入，给我技术指标、宏观环境、历史回测和止盈止损建议",
+  "分析腾讯控股目前的技术面和资金面，给出买卖建议",
+  "分析英伟达 NVDA 当前买入时机，结合宏观环境和技术指标",
+  "分析比亚迪现在值不值得买，给出止盈止损价位",
+  "分析恒生科技指数 ETF 的行情走势和操作建议",
+];
 
 function formatValue(value: unknown) {
   if (value === null || value === undefined) return "-";
@@ -76,7 +81,7 @@ function normalizeKlineRows(source: unknown): KlineRow[] {
 }
 
 export default function Home() {
-  const [userInput, setUserInput] = useState(demoPrompt);
+  const [userInput, setUserInput] = useState("");
   const [taskId, setTaskId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "pending" | "running" | "completed" | "failed">(
     "idle"
@@ -259,6 +264,23 @@ export default function Home() {
                 发起分析
               </button>
             </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="self-center text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                示例
+              </span>
+              {EXAMPLE_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => setUserInput(prompt)}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-400 transition hover:border-cyan-400/40 hover:bg-cyan-400/8 hover:text-cyan-200"
+                >
+                  {prompt.length > 22 ? `${prompt.slice(0, 22)}…` : prompt}
+                </button>
+              ))}
+            </div>
+
             {error ? <p className="mt-4 text-sm text-rose-300">{error}</p> : null}
           </section>
 

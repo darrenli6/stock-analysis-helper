@@ -1,5 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 import { db } from "~/server/db";
 import { travelTaskLogs, travelTasks } from "~/server/db/schema";
@@ -7,6 +8,15 @@ import { env } from "~/env";
 import type { FundAnalysisData, MacroAnalysisData, MacroSignal } from "~/types";
 
 const execFileAsync = promisify(execFile);
+
+// Resolve the local binary installed via package.json — avoids npx network fetch in
+// restricted server environments (e.g. AWS Lambda / Amplify sandboxes with no $HOME).
+const WESTOCK_BIN = path.join(
+  process.cwd(),
+  "node_modules",
+  ".bin",
+  "westock-data-clawhub"
+);
 
 type IntentResult = {
   supported: boolean;
@@ -333,17 +343,13 @@ async function setTaskStatus(
 
 async function runWestockCommand(args: string[]) {
   const startedAt = Date.now();
-  const command = ["npx", "-y", "westock-data-clawhub@1.0.4", ...args].join(" ");
+  const command = [WESTOCK_BIN, ...args].join(" ");
   console.log("[westock] start", command);
 
-  const { stdout, stderr } = await execFileAsync(
-    "npx",
-    ["-y", "westock-data-clawhub@1.0.4", ...args],
-    {
-      cwd: process.cwd(),
-      maxBuffer: 1024 * 1024 * 10,
-    }
-  );
+  const { stdout, stderr } = await execFileAsync(WESTOCK_BIN, args, {
+    cwd: process.cwd(),
+    maxBuffer: 1024 * 1024 * 10,
+  });
 
   let parsed: unknown = null;
   try {
