@@ -17,6 +17,9 @@ export const env = createEnv({
     SHOUQUAN_163_EMAIL: z.string().optional(),
     FROM_EMAIL: z.string().optional(),
     DEEPSEEK_API_KEY: z.string().optional(),
+    KIMI_AI_KEY: z.string().optional(),
+    BATTLE_PRD: z.string().optional(),
+    BATTLE_MODEL: z.string().optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -43,6 +46,9 @@ export const env = createEnv({
     SHOUQUAN_163_EMAIL: process.env.SHOUQUAN_163_EMAIL,
     FROM_EMAIL: process.env.FROM_EMAIL,
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    KIMI_AI_KEY: process.env.KIMI_AI_KEY,
+    BATTLE_PRD: process.env.BATTLE_PRD,
+    BATTLE_MODEL: process.env.BATTLE_MODEL,
     NODE_ENV: process.env.NODE_ENV,
   },
   /**

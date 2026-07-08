@@ -23,6 +23,34 @@ import { Footer } from "~/components/index/Footer";
 import { getNestedValue, normalizeKlineRows, toNumeric } from "~/components/index/formatters";
 import type { AnalysisResult, TaskLog, TaskSnapshot } from "~/types";
 
+// Next.js 会强制覆盖 NODE_ENV，.env 里设置无效；用 NEXT_PUBLIC_ 变量控制
+const REQUIRE_AUTH = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
+const VALID_KEY = "dalun666";
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const [allowed, setAllowed] = useState(!REQUIRE_AUTH);
+
+  useEffect(() => {
+    if (!REQUIRE_AUTH) return;
+    const params = new URLSearchParams(window.location.search);
+    setAllowed(params.get("key") === VALID_KEY);
+  }, []);
+
+  if (!allowed) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#05080d]">
+        <div className="flex flex-col items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-10 py-10 text-center shadow-2xl backdrop-blur-sm">
+          <span className="text-4xl">🔒</span>
+          <p className="text-lg font-semibold text-white">访问受限</p>
+          <p className="text-sm text-slate-400">请联系作者授权</p>
+        </div>
+      </main>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 export default function Home() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "pending" | "running" | "completed" | "failed">(
@@ -154,6 +182,7 @@ export default function Home() {
     : [];
 
   return (
+    <AuthGate>
     <>
       <Head>
         <title>达轮-股票分析助手</title>
@@ -315,5 +344,6 @@ export default function Home() {
         <MarketPulse />
       </main>
     </>
+    </AuthGate>
   );
 }

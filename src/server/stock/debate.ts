@@ -6,6 +6,22 @@ import type { AnalysisResult } from "~/types";
 
 const TOTAL_ROUNDS = 10;
 
+// ── BATTLE_PRD / BATTLE_MODEL 解析 ───────────────────────────────────────────
+
+// BATTLE_PRD="KIMI,DEEPSEEK"  →  bullPrd="KIMI"  bearPrd="DEEPSEEK"
+// BATTLE_MODEL="kimi-k2.6,deepseek-v4-pro"  →  bullModel="kimi-k2.6"  bearModel="deepseek-v4-pro"
+
+function parseBattleConfig() {
+  const prds = (env.BATTLE_PRD ?? "DEEPSEEK,OPENAI").split(",").map((s) => s.trim().toUpperCase());
+  const models = (env.BATTLE_MODEL ?? "deepseek-v4-pro,gpt-4o-mini").split(",").map((s) => s.trim());
+  return {
+    bullPrd: prds[0] ?? "DEEPSEEK",
+    bearPrd: prds[1] ?? "OPENAI",
+    bullModel: models[0] ?? "deepseek-v4-pro",
+    bearModel: models[1] ?? "gpt-4o-mini",
+  };
+}
+
 // ── 分析摘要 ──────────────────────────────────────────────────────────────────
 
 function buildAnalysisSummary(result: AnalysisResult): string {
@@ -39,61 +55,66 @@ function buildAnalysisSummary(result: AnalysisResult): string {
 
 type Message = { role: "system" | "user" | "assistant"; content: string };
 
-async function callDeepSeek(messages: Message[]): Promise<string> {
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
+interface ProviderConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  label: string;
+}
+
+function getProviderConfig(prd: string, model: string): ProviderConfig {
+  switch (prd) {
+    case "KIMI":
+      return {
+        baseUrl: "https://api.moonshot.cn/v1/chat/completions",
+        apiKey: env.KIMI_AI_KEY ?? "",
+        model,
+        label: "kimi",
+      };
+    case "DEEPSEEK":
+      return {
+        baseUrl: "https://api.deepseek.com/chat/completions",
+        apiKey: env.DEEPSEEK_API_KEY ?? "",
+        model,
+        label: "deepseek",
+      };
+    case "OPENAI":
+    default:
+      return {
+        baseUrl: "https://api.openai.com/v1/chat/completions",
+        apiKey: env.OPENAI_API_KEY ?? "",
+        model,
+        label: "openai",
+      };
+  }
+}
+
+async function callProvider(cfg: ProviderConfig, messages: Message[]): Promise<string> {
+  if (!cfg.apiKey) throw new Error(`${cfg.label} API Key 未配置`);
+
+  const res = await fetch(cfg.baseUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+      Authorization: `Bearer ${cfg.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "deepseek-v4-pro",
+      model: cfg.model,
       messages,
       stream: false,
     }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!res.ok) throw new Error(`DeepSeek error ${res.status}`);
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`${cfg.label} error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!text) throw new Error("DeepSeek 返回内容为空");
+  if (!text) throw new Error(`${cfg.label} 返回内容为空`);
   return text;
-}
-
-async function callOpenAI(messages: Message[]): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages,
-      max_tokens: 400,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!text) throw new Error("OpenAI 返回内容为空");
-  return text;
-}
-
-// 买方用 DeepSeek，空头用 OpenAI；若某方不可用则用另一方代替
-async function callBull(messages: Message[]): Promise<{ content: string; provider: string }> {
-  if (env.DEEPSEEK_API_KEY) {
-    return { content: await callDeepSeek(messages), provider: "deepseek" };
-  }
-  return { content: await callOpenAI(messages), provider: "openai" };
-}
-
-async function callBear(messages: Message[]): Promise<{ content: string; provider: string }> {
-  if (env.OPENAI_API_KEY) {
-    return { content: await callOpenAI(messages), provider: "openai" };
-  }
-  return { content: await callDeepSeek(messages), provider: "deepseek" };
 }
 
 // ── Prompt 构建 ───────────────────────────────────────────────────────────────
@@ -207,6 +228,9 @@ async function setDebateStatus(debateId: string, status: string) {
 async function processDebate(debateId: string, result: AnalysisResult) {
   const analysisSummary = buildAnalysisSummary(result);
   const stockName = result.stock.name;
+  const { bullPrd, bearPrd, bullModel, bearModel } = parseBattleConfig();
+  const bullCfg = getProviderConfig(bullPrd, bullModel);
+  const bearCfg = getProviderConfig(bearPrd, bearModel);
 
   for (let round = 1; round <= TOTAL_ROUNDS; round++) {
     for (const side of ["bull", "bear"] as const) {
@@ -225,35 +249,29 @@ async function processDebate(debateId: string, result: AnalysisResult) {
       }));
 
       const messages = buildMessages(side, round, stockName, analysisSummary, history);
-
-      const provider = side === "bull"
-        ? (env.DEEPSEEK_API_KEY ? "deepseek" : "openai")
-        : (env.OPENAI_API_KEY ? "openai" : "deepseek");
+      const cfg = side === "bull" ? bullCfg : bearCfg;
 
       console.log(
         `\n${"─".repeat(60)}\n` +
-        `[debate] debateId=${debateId} round=${round} side=${side} provider=${provider}\n` +
+        `[debate] debateId=${debateId} round=${round} side=${side} provider=${cfg.label} model=${cfg.model}\n` +
         `${"─".repeat(60)}\n` +
         messages.map((m) => `[${m.role.toUpperCase()}]\n${m.content}`).join("\n\n") +
         `\n${"─".repeat(60)}\n`
       );
 
       try {
-        const { content, provider: usedProvider } =
-          side === "bull"
-            ? await callBull(messages)
-            : await callBear(messages);
+        const content = await callProvider(cfg, messages);
 
         console.log(
-          `[debate] round=${round} side=${side} provider=${usedProvider} ✅ 回复长度=${content.length}\n` +
+          `[debate] round=${round} side=${side} provider=${cfg.label} ✅ 回复长度=${content.length}\n` +
           `[REPLY]\n${content}\n${"─".repeat(60)}\n`
         );
 
-        await saveMessage(debateId, round, side, usedProvider, content);
+        await saveMessage(debateId, round, side, cfg.label, content);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "AI 调用失败";
         console.error(`[debate] round=${round} side=${side} ❌ error: ${msg}`);
-        await saveMessage(debateId, round, side, provider, `[生成失败：${msg}]`);
+        await saveMessage(debateId, round, side, cfg.label, `[生成失败：${msg}]`);
       }
     }
   }
@@ -326,4 +344,13 @@ export async function toggleDebate(debateId: string, result: AnalysisResult) {
   }
 
   return debate.status;
+}
+
+// 供前端图例使用：返回当前配置的买卖方 provider label
+export function getBattleLabels() {
+  const { bullPrd, bearPrd, bullModel, bearModel } = parseBattleConfig();
+  return {
+    bull: { prd: bullPrd, model: bullModel, label: getProviderConfig(bullPrd, bullModel).label },
+    bear: { prd: bearPrd, model: bearModel, label: getProviderConfig(bearPrd, bearModel).label },
+  };
 }

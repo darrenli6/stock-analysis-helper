@@ -27,6 +27,7 @@ interface Props {
 const PROVIDER_LABEL: Record<string, string> = {
   deepseek: "DeepSeek",
   openai: "OpenAI",
+  kimi: "Kimi",
 };
 
 function RoundDivider({ round }: { round: number }) {
@@ -221,6 +222,10 @@ export function DebateDialog({ result, taskId, onClose }: Props) {
     }
   }
 
+  // 从已有消息推断买卖方 provider
+  const bullProvider = messages.find((m) => m.side === "bull")?.provider ?? null;
+  const bearProvider = messages.find((m) => m.side === "bear")?.provider ?? null;
+
   // 判断下一条该谁发言（用于 typing indicator）
   const nextExpected = (() => {
     if (!debate || debate.status !== "running") return null;
@@ -269,12 +274,16 @@ export function DebateDialog({ result, taskId, onClose }: Props) {
         <div className="flex shrink-0 items-center justify-center gap-6 border-b border-white/5 bg-white/2 py-2 text-xs">
           <span className="flex items-center gap-1.5 text-emerald-400">
             🐂 <span className="font-semibold">买方</span>
-            <span className="text-slate-500">· DeepSeek</span>
+            {bullProvider && (
+              <span className="text-slate-500">· {PROVIDER_LABEL[bullProvider] ?? bullProvider}</span>
+            )}
           </span>
           <span className="text-slate-600">VS</span>
           <span className="flex items-center gap-1.5 text-red-400">
             🐻 <span className="font-semibold">卖方</span>
-            <span className="text-slate-500">· OpenAI</span>
+            {bearProvider && (
+              <span className="text-slate-500">· {PROVIDER_LABEL[bearProvider] ?? bearProvider}</span>
+            )}
           </span>
         </div>
 
