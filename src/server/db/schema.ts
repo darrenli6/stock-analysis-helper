@@ -131,6 +131,20 @@ export const travelTaskLogsRelations = relations(travelTaskLogs, ({ one }) => ({
   }),
 }));
 
+// ── 分析结果缓存 ─────────────────────────────────────────────────────────────
+
+export const analysisCache = pgTable(
+  "analysis_cache",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    cacheKey: text("cache_key").notNull().unique(),
+    result: jsonb("result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("idx_analysis_cache_key").on(table.cacheKey, table.expiresAt)]
+);
+
 // ── 买卖方辩论 ──────────────────────────────────────────────────────────────
 
 export const stockDebates = pgTable(

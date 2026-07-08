@@ -1,8 +1,8 @@
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { db } from "~/server/db";
-import { travelTaskLogs, travelTasks } from "~/server/db/schema";
+import { analysisCache, travelTaskLogs, travelTasks } from "~/server/db/schema";
 import { env } from "~/env";
 import type { ChipData, DividendData, DividendRow, FinancialAnalysisData, FinancialReport, FundAnalysisData, MacroAnalysisData, MacroSignal, NewsCategory, NewsData, NewsItem, ShareholderCountRow, ShareholderData, ShareholderRow } from "~/types";
 
@@ -1502,7 +1502,60 @@ async function getLatestTaskResult(taskId: string) {
   return resultLogs.at(-1)?.payload ?? null;
 }
 
+// ── 缓存 key 规范化：小写 + 去除多余空格 ─────────────────────────────────────
+function normalizeCacheKey(input: string) {
+  return input.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 小时
+
+async function getCache(cacheKey: string) {
+  const [row] = await db
+    .select()
+    .from(analysisCache)
+    .where(
+      and(
+        eq(analysisCache.cacheKey, cacheKey),
+        sql`${analysisCache.expiresAt} > now()`
+      )
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+async function writeCache(cacheKey: string, result: unknown) {
+  const expiresAt = new Date(Date.now() + CACHE_TTL_MS);
+  await db
+    .insert(analysisCache)
+    .values({ cacheKey, result: result as Record<string, unknown>, expiresAt })
+    .onConflictDoUpdate({
+      target: analysisCache.cacheKey,
+      set: { result: result as Record<string, unknown>, expiresAt, createdAt: new Date() },
+    });
+}
+
 export async function createAnalysisTask(userInput: string) {
+  const cacheKey = normalizeCacheKey(userInput);
+
+  // ── 命中缓存：直接构造一个已完成的任务 ──────────────────────────────────
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    console.log("[createAnalysisTask] cache hit", { cacheKey });
+    const [task] = await db
+      .insert(travelTasks)
+      .values({ userInput, status: "completed" })
+      .returning();
+    if (!task) throw new Error("创建任务失败");
+
+    // 写入必要的日志让前端正常渲染
+    await logTask(task.id, 0, "step_start", getStepLabel(0));
+    await logTask(task.id, 0, "step_done", "命中缓存，直接返回结果（2小时内）");
+    await logTask(task.id, 6, "result", "缓存命中，分析完成", cached.result);
+    await logTask(task.id, 6, "step_done", "最终结果已写入（来自缓存）");
+    return task;
+  }
+
+  // ── 未命中：正常创建任务 ─────────────────────────────────────────────────
   console.log("[createAnalysisTask] before insert travel_tasks", { userInput });
   const [task] = await db
     .insert(travelTasks)
@@ -1524,7 +1577,7 @@ export async function createAnalysisTask(userInput: string) {
 
   setTimeout(() => {
     debugTask(task.id, "schedule", "background processing dispatched");
-    void processTask(task.id).catch((error) => {
+    void processTask(task.id, cacheKey).catch((error) => {
       debugTask(task.id, "background-error", "unhandled processTask error", {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -1534,7 +1587,7 @@ export async function createAnalysisTask(userInput: string) {
   return task;
 }
 
-export async function processTask(taskId: string) {
+export async function processTask(taskId: string, cacheKey?: string) {
   debugTask(taskId, "process", "task processing started");
   const [task] = await db.select().from(travelTasks).where(eq(travelTasks.id, taskId)).limit(1);
   if (!task) return;
@@ -1804,6 +1857,13 @@ export async function processTask(taskId: string) {
     await logTask(taskId, 6, "result", "分析完成", result);
     await logTask(taskId, 6, "step_done", "最终结果已写入");
     await setTaskStatus(taskId, "completed", stock.name);
+
+    // 写入缓存
+    if (cacheKey) {
+      void writeCache(cacheKey, result).catch((e) =>
+        console.error("[cache] write failed", e)
+      );
+    }
     debugTask(taskId, "process", "task completed", {
       stock: stock.code,
       action: recommendation.action,

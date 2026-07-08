@@ -137,7 +137,7 @@ export function ActionMenu({ result }: Props) {
                   onChange={(e) => setEmail(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") void handleSend(); }}
                   placeholder="your@email.com"
-                  className="mb-3 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none transition focus:border-teal-500/60 focus:ring-1 focus:ring-teal-500/30"
+                  className="input-dark mb-3 w-full rounded-xl border border-white/15 bg-white/8 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-teal-500/60 focus:ring-1 focus:ring-teal-500/30"
                   autoFocus
                 />
                 {sent === "err" && (

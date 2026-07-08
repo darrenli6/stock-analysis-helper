@@ -10,8 +10,9 @@
 
 html,
 body {
-  /* 禁止移动端下拉刷新手势 */
-  overscroll-behavior-y: none;
+  /* 禁止左右滑动，保留上下滚动 */
+  overscroll-behavior-x: none;
+  overflow-x: hidden;
 }
 
 body {
@@ -359,9 +360,15 @@ html[data-theme="light"] .bg-white\/5 {
 }
 
 html[data-theme="light"] textarea,
-html[data-theme="light"] input {
+html[data-theme="light"] input:not(.input-dark) {
   color: #0f172a !important;
   background-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+/* modal 等深色容器内的 input 强制保持深色风格 */
+html[data-theme="light"] input.input-dark {
+  color: rgb(226 232 240) !important;        /* slate-200 */
+  background-color: rgba(255 255 255 / 0.08) !important;
 }
 
 html[data-theme="light"] .market-backdrop__glow--left {
