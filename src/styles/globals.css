@@ -8,6 +8,12 @@
   color-scheme: dark;
 }
 
+html,
+body {
+  /* 禁止移动端下拉刷新手势 */
+  overscroll-behavior-y: none;
+}
+
 body {
   min-height: 100vh;
   font-family: var(--font-sans);
